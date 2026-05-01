@@ -1,0 +1,12 @@
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Secrets and local env files
+.env
+**/.env
+
+# Streamlit local metadata
+.streamlit/secrets.toml
+
