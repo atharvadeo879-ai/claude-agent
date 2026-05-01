@@ -27,6 +27,9 @@ def _load_local_env_if_present() -> None:
 def _service() -> Phase7Service:
     if "phase7_service" not in st.session_state:
         _load_local_env_if_present()
+        secret_key = st.secrets.get("GROQ_API_KEY", "")
+        if secret_key and "GROQ_API_KEY" not in os.environ:
+            os.environ["GROQ_API_KEY"] = secret_key
         st.session_state["phase7_service"] = Phase7Service(
             groq_client=GroqClient(),
             vector_provider="chromadb",
@@ -37,6 +40,8 @@ def _service() -> Phase7Service:
 
 def _bootstrap_session() -> None:
     st.session_state.setdefault("history", [])
+    st.session_state.setdefault("groq_enabled", False)
+    st.session_state.setdefault("last_provider_status", {})
     st.session_state.setdefault(
         "generation_result",
         {
@@ -51,13 +56,47 @@ def _bootstrap_session() -> None:
     )
 
 
+def _render_styles() -> None:
+    st.markdown(
+        """
+        <style>
+          .block-container {padding-top: 1.2rem; padding-bottom: 1.2rem; max-width: 1100px;}
+          .ag-card {
+            border: 1px solid rgba(120, 120, 200, 0.25);
+            border-radius: 12px;
+            padding: 14px 16px;
+            background: rgba(20, 28, 52, 0.45);
+            margin-bottom: 10px;
+          }
+          .ag-title {font-size: 1.05rem; font-weight: 650; margin-bottom: 0.25rem;}
+          .ag-muted {color: #8ea0c9; font-size: 0.92rem;}
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def main() -> None:
     st.set_page_config(page_title="Claude Agent Architecture", layout="wide")
+    _render_styles()
     st.title("Claude Agent - Architecture Generator")
-    st.caption("Phase 7 Streamlit UI with Groq integration and token usage insights.")
+    st.caption("Smooth architecture generation with automatic fallback when Groq is unavailable.")
 
     _bootstrap_session()
     service = _service()
+
+    with st.sidebar:
+        st.subheader("Provider Settings")
+        has_key = bool(os.getenv("GROQ_API_KEY", "").strip())
+        st.session_state["groq_enabled"] = st.toggle(
+            "Use Groq provider",
+            value=bool(st.session_state.get("groq_enabled", False) and has_key),
+            disabled=not has_key,
+            help="Optional. If disabled, app uses stable fallback mode.",
+        )
+        if not has_key:
+            st.info("No GROQ_API_KEY found. Running in fallback mode.")
+        st.caption("Recommended: keep fallback mode for stable behavior.")
 
     prompt = st.text_area(
         "Prompt",
@@ -83,21 +122,43 @@ def main() -> None:
                     user_id="streamlit-user",
                     date_key=str(date.today()),
                     prompt=prompt.strip(),
+                    use_groq=bool(st.session_state.get("groq_enabled", False)),
                 )
                 st.session_state["generation_result"] = result
+                st.session_state["last_provider_status"] = result.get("provider_status", {})
                 st.session_state["history"].insert(0, prompt.strip())
             except Exception as exc:  # noqa: BLE001
-                st.error(f"Generation failed: {exc}")
+                st.error(
+                    "Generation hit an unexpected error. "
+                    "Please retry. Details: " + str(exc)
+                )
 
     result = st.session_state["generation_result"]
     sections = result["sections"]
     tokens = result["token_usage"]
+    provider_status = result.get("provider_status", {})
+
+    if provider_status:
+        status_label = provider_status.get("status", "unknown")
+        if status_label == "error":
+            st.warning("Provider issue detected. App is using fallback mode for smooth generation.")
+            st.session_state["groq_enabled"] = False
+        elif status_label == "disabled":
+            st.caption("Fallback provider mode active.")
+        else:
+            st.caption("Groq provider active.")
 
     st.markdown("### Generated Architecture")
     for title, body in sections.items():
-        with st.container(border=True):
-            st.subheader(title)
-            st.write(body)
+        st.markdown(
+            f"""
+            <div class="ag-card">
+              <div class="ag-title">{title}</div>
+              <div class="ag-muted">{body}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
     st.markdown("### Edit Actions")
     col1, col2 = st.columns(2)

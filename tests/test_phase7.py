@@ -19,6 +19,10 @@ def fake_transport(_: request.Request) -> str:
     )
 
 
+def forbidden_transport(_: request.Request) -> str:
+    raise RuntimeError("HTTP Error 403: Forbidden")
+
+
 class TestPhase7(unittest.TestCase):
     def test_groq_requires_api_key(self):
         client = GroqClient(api_key="")
@@ -62,6 +66,40 @@ class TestPhase7(unittest.TestCase):
         html = service.build_ui_page(result, ["Initial run"])
         self.assertIn("Architecture Session", html)
         self.assertIn("Session History", html)
+
+    def test_phase7_service_falls_back_when_groq_forbidden(self):
+        service = Phase7Service(
+            groq_client=GroqClient(api_key="gsk_bad_key", transport=forbidden_transport),
+            vector_provider="chromadb",
+            daily_limit=10000,
+        )
+        result = service.generate_architecture(
+            user_id="u-7",
+            date_key="2026-05-01",
+            prompt="Design architecture for fallback testing.",
+        )
+        self.assertIn("Overview", result["sections"])
+        self.assertIn("provider_status", result)
+        self.assertFalse(result["provider_status"]["ok"])
+        self.assertEqual(result["provider_status"]["status"], "error")
+        self.assertIn("fallback", result["provider_status"]["message"].lower())
+
+    def test_phase7_service_can_skip_groq_cleanly(self):
+        service = Phase7Service(
+            groq_client=GroqClient(api_key="gsk_unused", transport=forbidden_transport),
+            vector_provider="chromadb",
+            daily_limit=10000,
+        )
+        result = service.generate_architecture(
+            user_id="u-7",
+            date_key="2026-05-01",
+            prompt="Design architecture with fallback only.",
+            use_groq=False,
+        )
+        self.assertIn("Overview", result["sections"])
+        self.assertFalse(result["provider_status"]["ok"])
+        self.assertEqual(result["provider_status"]["status"], "disabled")
+        self.assertIn("fallback", result["provider_status"]["message"].lower())
 
 
 if __name__ == "__main__":

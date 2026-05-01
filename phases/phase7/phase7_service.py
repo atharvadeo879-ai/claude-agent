@@ -17,12 +17,41 @@ class Phase7Service(ClaudeAgentService):
         super().__init__(vector_provider=vector_provider, daily_limit=daily_limit)
         self.groq_client = groq_client or GroqClient()
 
-    def generate_architecture(self, user_id: str, date_key: str, prompt: str) -> dict:
+    def generate_architecture(
+        self,
+        user_id: str,
+        date_key: str,
+        prompt: str,
+        use_groq: bool = True,
+    ) -> dict:
         result = super().generate_architecture(user_id=user_id, date_key=date_key, prompt=prompt)
-        groq_text = self.groq_client.generate(
-            "Return an architecture-style summary for this request: " + prompt
-        )
-        result["sections"]["Overview"] = f"Overview: {groq_text}"
+        result["provider_status"] = {
+            "provider": "groq",
+            "ok": True,
+            "status": "success",
+            "message": "Groq generation succeeded.",
+        }
+        if not use_groq:
+            result["provider_status"] = {
+                "provider": "groq",
+                "ok": False,
+                "status": "disabled",
+                "message": "Groq disabled. Using fallback architecture generation.",
+            }
+            return result
+        try:
+            groq_text = self.groq_client.generate(
+                "Return an architecture-style summary for this request: " + prompt
+            )
+            result["sections"]["Overview"] = f"Overview: {groq_text}"
+        except Exception as exc:  # noqa: BLE001
+            # Keep core generation available even if Groq endpoint/key fails.
+            result["provider_status"] = {
+                "provider": "groq",
+                "ok": False,
+                "status": "error",
+                "message": f"Groq unavailable. Fallback mode enabled for this request. ({exc})",
+            }
         return result
 
     def build_ui_page(self, generation_result: dict, history_items: list[str], prompt_value: str = "") -> str:
